@@ -143,6 +143,17 @@ services:
       # dir; the install bundle pre-stages it so air-gapped operators
       # don't need HF reach.
       ONGRID_EMBEDDING_CACHE_DIR: ${ONGRID_EMBEDDING_CACHE_DIR:-/var/lib/ongrid/embeddings}
+      # LLM Wiki source files, generated pages, version snapshots and staging data.
+      ONGRID_LLM_WIKI_ENABLED: ${ONGRID_LLM_WIKI_ENABLED:-true}
+      ONGRID_LLM_WIKI_DIR: ${ONGRID_LLM_WIKI_DIR:-/var/lib/ongrid/llm-wiki}
+      ONGRID_LLM_WIKI_TIMEOUT_SECONDS: ${ONGRID_LLM_WIKI_TIMEOUT_SECONDS:-600}
+      ONGRID_LLM_WIKI_LEAF_BATCH_INPUT_TOKENS: ${ONGRID_LLM_WIKI_LEAF_BATCH_INPUT_TOKENS:-32000}
+      ONGRID_LLM_WIKI_LEAF_BATCH_OUTPUT_TOKENS: ${ONGRID_LLM_WIKI_LEAF_BATCH_OUTPUT_TOKENS:-8000}
+      ONGRID_LLM_WIKI_LEAF_BATCH_SAFETY_TOKENS: ${ONGRID_LLM_WIKI_LEAF_BATCH_SAFETY_TOKENS:-4000}
+      ONGRID_LLM_WIKI_ENABLE_LEAF_BATCH: ${ONGRID_LLM_WIKI_ENABLE_LEAF_BATCH:-true}
+      ONGRID_LLM_WIKI_ENABLE_CHUNK_CACHE: ${ONGRID_LLM_WIKI_ENABLE_CHUNK_CACHE:-true}
+      ONGRID_LLM_WIKI_ENABLE_SOURCE_SYNTHESIS: ${ONGRID_LLM_WIKI_ENABLE_SOURCE_SYNTHESIS:-true}
+      ONGRID_LLM_WIKI_LEAF_MODEL_VERSION: ${ONGRID_LLM_WIKI_LEAF_MODEL_VERSION:-}
       ONNX_PATH: /usr/lib/libonnxruntime.so
       # OTel tracing — Tempo OTLP HTTP receiver (HLD-004 Phase-B trace
       # evaluators need real spans for traces_spanmetrics_* to populate).
@@ -271,6 +282,9 @@ services:
       # reading them back from the Edge, then serves authenticated downloads and
       # private parser fetches from the same durable path.
       - ${ONGRID_DATA_DIR:-/var/lib/ongrid}/packet-captures:/var/lib/ongrid/packet-captures
+      # LLM Wiki raw sources, generated Markdown, version snapshots, staging
+      # files and staging data. It must survive container recreation and upgrades.
+      - ${ONGRID_DATA_DIR:-/var/lib/ongrid}/llm-wiki:${ONGRID_LLM_WIKI_DIR:-/var/lib/ongrid/llm-wiki}
       - ${ONGRID_DATA_DIR:-/var/lib/ongrid}/chat-attachments:/var/lib/ongrid/chat-attachments
       - ${ONGRID_DATA_DIR:-/var/lib/ongrid}/pcap-parser/manager:/var/lib/ongrid/pcap-parser:ro
     logging:

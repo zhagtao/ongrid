@@ -105,6 +105,35 @@ type Usecase struct {
 	// `knowledge.vault_seed_optout` sentinel so the built-in vault
 	// seed doesn't re-create the row on next boot. Nil = no hook.
 	onRepoDelete func(ctx context.Context, url string)
+	sourceMirror SourceMirror
+}
+
+// SourceMirror is defined by the consuming Knowledge bounded context. The
+// composition root adapts LLM Wiki without introducing a cross-domain import.
+type SourceMirror interface {
+	MirrorSource(ctx context.Context, source MirrorSource) error
+}
+
+type MirrorSource struct {
+	Key        string
+	SourceType string
+	Name       string
+	Content    string
+}
+
+func (u *Usecase) WithSourceMirror(mirror SourceMirror) *Usecase {
+	u.sourceMirror = mirror
+	return u
+}
+
+func (u *Usecase) mirrorSource(ctx context.Context, source MirrorSource) error {
+	if u.sourceMirror == nil {
+		return nil
+	}
+	if err := u.sourceMirror.MirrorSource(ctx, source); err != nil {
+		return fmt.Errorf("knowledge: mirror raw source: %w", err)
+	}
+	return nil
 }
 
 // WithRepoDeleteHook registers a callback fired after DeleteRepo
@@ -214,6 +243,9 @@ func (u *Usecase) CreateManualDoc(ctx context.Context, in CreateManualDocInput) 
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}
+	if err := u.mirrorSource(ctx, MirrorSource{Key: fmt.Sprintf("manual:%d", id), SourceType: model.SourceManual, Name: title + ".md", Content: content}); err != nil {
+		return nil, err
+	}
 	if err := u.upsertDoc(ctx, d); err != nil {
 		return nil, err
 	}
@@ -255,7 +287,7 @@ func (u *Usecase) UploadDoc(ctx context.Context, in UploadDocInput) (*model.Doc,
 		title = title[:256]
 	}
 	now := time.Now().UTC()
-	return u.ingestUpload(ctx, model.Doc{
+	doc := model.Doc{
 		SourceType: model.SourceUpload,
 		URL:        url,
 		Title:      title,
@@ -264,7 +296,11 @@ func (u *Usecase) UploadDoc(ctx context.Context, in UploadDocInput) (*model.Doc,
 		Tags:       normalizeTags(in.Tags),
 		CreatedAt:  now,
 		UpdatedAt:  now,
-	})
+	}
+	if err := u.mirrorSource(ctx, MirrorSource{Key: "upload:" + url, SourceType: model.SourceUpload, Name: url, Content: content}); err != nil {
+		return nil, err
+	}
+	return u.ingestUpload(ctx, doc)
 }
 
 // ingestUpload (re)chunks one org-uploaded file into qdrant under
@@ -371,6 +407,9 @@ func (u *Usecase) UpdateManualDoc(ctx context.Context, id uint64, in UpdateManua
 	}
 	switch existing.SourceType {
 	case model.SourceManual:
+		if err := u.mirrorSource(ctx, MirrorSource{Key: fmt.Sprintf("manual:%d", existing.ID), SourceType: model.SourceManual, Name: title + ".md", Content: content}); err != nil {
+			return nil, err
+		}
 		existing.Title = title
 		existing.TitleEN = strings.TrimSpace(in.TitleEN)
 		existing.Content = content
@@ -385,6 +424,9 @@ func (u *Usecase) UpdateManualDoc(ctx context.Context, id uint64, in UpdateManua
 		// Re-chunk + re-embed the edited file under its stable url identity.
 		// url is the file's identity (not editable); title/title_en/content/
 		// path/tags all are. CreatedAt is preserved across the re-ingest.
+		if err := u.mirrorSource(ctx, MirrorSource{Key: "upload:" + existing.URL, SourceType: model.SourceUpload, Name: existing.URL, Content: content}); err != nil {
+			return nil, err
+		}
 		return u.ingestUpload(ctx, model.Doc{
 			SourceType: model.SourceUpload,
 			URL:        existing.URL,
@@ -815,6 +857,7 @@ func (u *Usecase) Search(ctx context.Context, q string, opts SearchOptions) ([]S
 		out = append(out, SearchHit{
 			Doc:   payloadToDoc(h.ID, h.Payload),
 			Score: h.Score,
+			Layer: "raw",
 		})
 		if len(out) >= limit {
 			break
@@ -1010,6 +1053,11 @@ func (u *Usecase) Sync(ctx context.Context, id uint64) (*model.Repository, error
 	files, err := scanRepoFiles(dir)
 	if err != nil {
 		return u.recordSyncFailure(ctx, repo, fmt.Errorf("scan files: %w", err))
+	}
+	for i := range files {
+		if err := u.mirrorSource(ctx, MirrorSource{Key: fmt.Sprintf("repo:%d:%s", repo.ID, files[i].URL), SourceType: model.SourceRepo, Name: files[i].URL, Content: files[i].Content}); err != nil {
+			return u.recordSyncFailure(ctx, repo, err)
+		}
 	}
 
 	// Drop the previous point set first; if embedding/upsert fails
@@ -1898,6 +1946,7 @@ func ptrU64(v uint64) *uint64 { return &v }
 func manualDocID(title string) uint64 {
 	return docID("manual||" + title)
 }
+
 func repoDocID(repoID uint64, url string) uint64 {
 	return docID(fmt.Sprintf("repo||%d||%s", repoID, url))
 }

@@ -118,6 +118,7 @@ import (
 	managerbizimbridgeslack "github.com/ongridio/ongrid/internal/manager/biz/imbridge/provider/slack"
 	managerbizimbridgetelegram "github.com/ongridio/ongrid/internal/manager/biz/imbridge/provider/telegram"
 	managerbizknowledge "github.com/ongridio/ongrid/internal/manager/biz/knowledge"
+	managerbizllmwiki "github.com/ongridio/ongrid/internal/manager/biz/knowledge/llm_wiki"
 	managerbizmarketplace "github.com/ongridio/ongrid/internal/manager/biz/marketplace"
 	managerbizmcp "github.com/ongridio/ongrid/internal/manager/biz/mcp"
 	managerbizmonitor "github.com/ongridio/ongrid/internal/manager/biz/monitor"
@@ -130,6 +131,7 @@ import (
 	manageraiopsdata "github.com/ongridio/ongrid/internal/manager/data/aiops/store"
 	managerapprovaldata "github.com/ongridio/ongrid/internal/manager/data/approval/store"
 	managerimbridgedata "github.com/ongridio/ongrid/internal/manager/data/imbridge/store"
+	managerllmwikidata "github.com/ongridio/ongrid/internal/manager/data/knowledge/llm_wiki"
 	managerknowledgedata "github.com/ongridio/ongrid/internal/manager/data/knowledge/store"
 	managermarketplacedata "github.com/ongridio/ongrid/internal/manager/data/marketplace/store"
 	managermcpdata "github.com/ongridio/ongrid/internal/manager/data/mcp/store"
@@ -192,6 +194,7 @@ import (
 	managersvcedge "github.com/ongridio/ongrid/internal/manager/service/edge"
 	managersvcfb "github.com/ongridio/ongrid/internal/manager/service/frontierbound"
 	managersvck8s "github.com/ongridio/ongrid/internal/manager/service/k8s"
+	managersvcknowledge "github.com/ongridio/ongrid/internal/manager/service/knowledge"
 	managersvcmetric "github.com/ongridio/ongrid/internal/manager/service/metric"
 	managersvcprom "github.com/ongridio/ongrid/internal/manager/service/prometheus"
 	managersvcsystemhealth "github.com/ongridio/ongrid/internal/manager/service/systemhealth"
@@ -1486,9 +1489,52 @@ func main() {
 	if qdrantURL == "" {
 		qdrantURL = "http://qdrant:6333"
 	}
+	qdrantClient := qdrantx.New(qdrantURL, log.With(slog.String("comp", "qdrant")))
+	var maybeEmbedder embedding.Embedder
+	if embErr != nil {
+		log.Warn("knowledge: embedder unavailable — reads enabled, writes disabled",
+			slog.Any("err", embErr))
+	} else {
+		maybeEmbedder = embedder
+	}
+	var llmWikiUC *managerbizllmwiki.Usecase
+	if cfg.LLMWiki.Enabled {
+		wikiRoot := strings.TrimSpace(cfg.LLMWiki.Dir)
+		wikiFiles, err := managerbizllmwiki.NewFileStore(wikiRoot)
+		if err != nil {
+			log.Error("llm wiki: file store failed", slog.Any("err", err))
+		} else if ensureErr := wikiFiles.Ensure(rootCtx); ensureErr != nil {
+			log.Error("llm wiki: initialize file tree failed", slog.Any("err", ensureErr))
+		} else {
+			wikiStore, openErr := managerllmwikidata.OpenSQLiteStore(rootCtx, wikiRoot, maybeEmbedder, embDim, log.With(slog.String("comp", "llmwiki-db")))
+			if openErr != nil {
+				log.Error("llm wiki: sqlite open failed", slog.Any("err", openErr))
+			} else {
+				defer func() {
+					if closeErr := wikiStore.Close(); closeErr != nil {
+						log.Error("llm wiki: sqlite close failed", slog.Any("err", closeErr))
+					}
+				}()
+				wikiRepo := wikiStore.Repository()
+				wikiIndexer := wikiStore.SearchIndex
+				wikiLimits := managerbizllmwiki.DefaultPlannerConfig()
+				wikiLimits.LeafBatchInputTokens = cfg.LLMWiki.LeafBatchInputTokens
+				wikiLimits.LeafBatchOutputTokens = cfg.LLMWiki.LeafBatchOutputTokens
+				wikiLimits.LeafBatchSafetyTokens = cfg.LLMWiki.LeafBatchSafetyTokens
+				wikiLimits.EnableLeafBatch = cfg.LLMWiki.EnableLeafBatch
+				wikiLimits.EnableChunkCache = cfg.LLMWiki.EnableChunkCache
+				wikiLimits.EnableSourceSynthesis = cfg.LLMWiki.EnableSourceSynthesis
+				wikiLimits.LeafModelVersion = cfg.LLMWiki.LeafModelVersion
+				llmWikiUC, err = managerbizllmwiki.NewWithUsageRecorder(rootCtx, wikiRepo, wikiFiles, managerbizllmwiki.NewLLMSummarizerWithModelVersion(llmClient, cfg.OpenAI.Model), wikiIndexer, log.With(slog.String("comp", "llmwiki")), managersvcknowledge.NewLLMWikiUsageRecorder(aiopsRepo), managerbizllmwiki.CompileTriggerOption{Owner: "ongrid-manager", Timeout: time.Duration(cfg.LLMWiki.TimeoutSeconds) * time.Second, Limits: &wikiLimits})
+				if err != nil {
+					log.Error("llm wiki: usecase failed", slog.Any("err", err))
+				}
+			}
+		}
+	}
 	var knowledgeUC *managerbizknowledge.Usecase
+	var knowledgeSearcher *managersvcknowledge.HybridSearcher
 	{
-		qdrantClient := qdrantx.New(qdrantURL, log.With(slog.String("comp", "qdrant")))
 		// Build with a nil embedder when one isn't configured — the
 		// usecase exposes read paths (ListDocs/Repos/GetDoc/ListPaths)
 		// and gates write paths (CreateManualDoc/Sync/Search) on
@@ -1496,13 +1542,6 @@ func main() {
 		// fresh install instead of 404'ing. Operator configures
 		// ONGRID_EMBEDDING_API_KEY later → writes unblock without
 		// restart-of-stack (only the manager needs the key on boot).
-		var maybeEmbedder embedding.Embedder
-		if embErr != nil {
-			log.Warn("knowledge: embedder unavailable — reads enabled, writes disabled",
-				slog.Any("err", embErr))
-		} else {
-			maybeEmbedder = embedder
-		}
 		uc, kErr := managerbizknowledge.New(rootCtx, knowledgeRepo, qdrantClient, maybeEmbedder,
 			os.Getenv("ONGRID_KNOWLEDGE_REPO_DIR"),
 			log.With(slog.String("comp", "knowledge")))
@@ -1510,7 +1549,8 @@ func main() {
 			log.Warn("knowledge: usecase build failed", slog.Any("err", kErr))
 		} else {
 			knowledgeUC = uc
-			toolsReg.SetKnowledgeSearcher(knowledgeUC)
+			knowledgeSearcher = managersvcknowledge.NewHybridSearcher(knowledgeUC, llmWikiUC)
+			toolsReg.SetKnowledgeSearcher(knowledgeSearcher)
 			// GitHub-PAT-via-GIT_ASKPASS resolver wiring
 			// removed. SSH-style repos use ssh_identities; HTTPS auth
 			// returns in P3 via credential.helper.
@@ -2026,6 +2066,14 @@ func main() {
 	var knowledgeHandler *managerserverknowledge.Handler
 	if knowledgeUC != nil {
 		knowledgeHandler = managerserverknowledge.NewHandler(knowledgeUC)
+		knowledgeHandler.SetSearchService(knowledgeSearcher)
+		knowledgeHandler.SetAuthz(authzMW)
+	}
+	if llmWikiUC != nil {
+		if knowledgeHandler == nil {
+			knowledgeHandler = managerserverknowledge.NewHandler(nil)
+		}
+		knowledgeHandler.SetLLMWikiService(llmWikiUC)
 		knowledgeHandler.SetAuthz(authzMW)
 	}
 

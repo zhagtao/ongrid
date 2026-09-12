@@ -57,6 +57,15 @@ function useBaseHandlers() {
     http.get(`${listURL}/202`, () =>
       HttpResponse.json({ ...manualDoc }),
     ),
+    http.get('/api/v1/knowledge/llm-wiki/tree', () =>
+      HttpResponse.json({ code: 'ok', message: 'ok', data: { items: [], total: 0, document_count: 0 } }),
+    ),
+    http.get('/api/v1/knowledge/llm-wiki/jobs', () =>
+      HttpResponse.json({ code: 'ok', message: 'ok', data: { items: [], total: 0 } }),
+    ),
+    http.get('/api/v1/knowledge/llm-wiki/sources', () =>
+      HttpResponse.json({ code: 'ok', message: 'ok', data: { items: [], total: 0 } }),
+    ),
   );
 }
 
@@ -168,5 +177,246 @@ describe('KnowledgePage', () => {
 
     await waitFor(() => expect(patchedBody).not.toBeNull());
     expect(patchedBody).toMatchObject({ title: '组织 SOP', content: '更新后的正文' });
+  });
+
+  it('LLM Wiki 只有总根目录无文件时显示空状态，且不展示本地路径', async () => {
+    render(<KnowledgePage />);
+
+    expect(screen.getByRole('button', { name: 'LLM Wiki' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '生成页面' })).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole('button', { name: /^LLM Wiki/ }));
+
+    expect(await screen.findByText('LLM Wiki 还没有内容')).toBeInTheDocument();
+    expect(screen.queryByText('/var/lib/ongrid/llm-wiki/')).not.toBeInTheDocument();
+  });
+
+  it('LLM Wiki 通过目录查看生成页，详情展示知识节点和来源', async () => {
+    let rawPreviewRequested = false;
+    server.use(
+      http.get('/api/v1/knowledge/llm-wiki/tree', ({ request }) => {
+        const layer = new URL(request.url).searchParams.get('layer');
+        const parentID = new URL(request.url).searchParams.get('parent_id');
+        const items = layer === 'raw'
+          ? [{ id: 'raw-xx', parent_id: '', layer: 'raw', kind: 'file', name: '知识库.pdf', relative_path: '知识库.pdf', source_id: '7', has_children: false, child_count: 0, document_count: 1 }]
+          : layer === 'schema'
+            ? [{ id: 'schema', parent_id: '', layer: 'schema', kind: 'file', name: 'schema.md', relative_path: 'schema.md', has_children: false, child_count: 0, document_count: 1 }]
+          : parentID === 'wiki-topics'
+            ? [{ id: 'wiki-rag', parent_id: 'wiki-topics', layer: 'wiki', kind: 'file', name: 'RAG', relative_path: 'topics/topic-rag.md', page_type: 'topic', has_children: false, child_count: 0, document_count: 1 }]
+            : parentID === 'wiki-sources'
+              ? [{ id: 'wiki-guide', parent_id: 'wiki-sources', layer: 'wiki', kind: 'file', name: 'guide.md', relative_path: 'manual/guide.md', page_type: 'source', has_children: false, child_count: 0, document_count: 1 }]
+              : [
+                  { id: 'wiki-topics', parent_id: '', layer: 'wiki', kind: 'folder', name: 'topics', relative_path: 'topics', has_children: true, child_count: 1, document_count: 1 },
+                  { id: 'wiki-sources', parent_id: '', layer: 'wiki', kind: 'folder', name: 'manual', relative_path: 'manual', has_children: true, child_count: 1, document_count: 1 },
+                ];
+        return HttpResponse.json({ code: 'ok', message: 'ok', data: { items, total: items.length, document_count: 2 } });
+      }),
+      http.get('/api/v1/knowledge/llm-wiki/nodes/wiki-rag', () =>
+        HttpResponse.json({
+          code: 'ok',
+          message: 'ok',
+          data: {
+            id: 'wiki-rag', layer: 'wiki', kind: 'file', name: 'topic-rag.md', page_type: 'topic',
+            relative_path: 'topics/topic-rag.md', content: '---\nid: topic-rag\ntype: topic\ntitle: RAG\nlanguage: und\nsource_versions: [3]\n---\n\n# RAG 正文\n\n可阅读的 Wiki 文件。', updated_at: '2026-09-08T10:20:30Z',
+            metadata: {
+              page_type: 'topic', aliases: ['Retrieval-Augmented Generation'], entities: ['PostgreSQL'], concepts: ['HNSW'],
+              source_files: [{ path: 'raw/knowledge.md', node_id: 'raw-knowledge', version_id: '3' }],
+            },
+          },
+        }),
+      ),
+      http.get('/api/v1/knowledge/llm-wiki/nodes/raw-xx', () =>
+        HttpResponse.json({
+          code: 'ok',
+          message: 'ok',
+          data: {
+            id: 'raw-xx', layer: 'raw', kind: 'file', name: '知识库.pdf',
+            relative_path: '知识库.pdf', content: '# Raw 正文', updated_at: '2026-09-08T09:10:20Z',
+            metadata: {
+              wiki_files: [{ title: 'RAG', path: 'topics/topic-rag.md', node_id: 'wiki-rag', page_id: 'topic-rag' }],
+            },
+          },
+        }),
+      ),
+      http.get('/api/v1/knowledge/llm-wiki/nodes/raw-xx/preview', () => {
+        rawPreviewRequested = true;
+        return new HttpResponse('%PDF-1.4 preview', { headers: { 'Content-Type': 'application/pdf' } });
+      }),
+      http.get('/api/v1/knowledge/llm-wiki/nodes/raw-knowledge', () =>
+        HttpResponse.json({
+          code: 'ok',
+          message: 'ok',
+          data: {
+            id: 'raw-knowledge', layer: 'raw', kind: 'file', name: 'knowledge.md',
+            relative_path: 'raw/knowledge.md', content: '# Knowledge Raw 正文', updated_at: '2026-09-08T08:10:20Z',
+            metadata: {
+              wiki_files: [{ title: 'RAG', path: 'topics/topic-rag.md', node_id: 'wiki-rag', page_id: 'topic-rag' }],
+            },
+          },
+        }),
+      ),
+    );
+
+    render(<KnowledgePage />);
+
+    expect(await screen.findByText('LLM Wiki')).toBeInTheDocument();
+    expect(document.querySelector('input[accept=".md,.markdown,.txt,.text,.pdf,.docx"]')).toBeInTheDocument();
+    expect(await screen.findByText('共 4 条 · 组织 1 · 内置 1 · LLM Wiki 2')).toBeInTheDocument();
+    expect(screen.queryByText('/var/lib/ongrid/llm-wiki/')).not.toBeInTheDocument();
+    expect(screen.getByText('原始来源').parentElement?.parentElement).toHaveTextContent('原始来源1');
+    expect(screen.getByText('生成页面').parentElement?.parentElement).toHaveTextContent('生成页面2');
+    expect(screen.queryByText('schema.md')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByText('LLM Wiki'));
+    expect(await screen.findByText('RAG')).toBeInTheDocument();
+    expect(await screen.findByText('guide')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText('原始来源'));
+    expect((await screen.findAllByText('知识库.pdf')).length).toBeGreaterThanOrEqual(1);
+    await userEvent.click(screen.getAllByText('知识库.pdf')[0]);
+    await waitFor(() => expect(rawPreviewRequested).toBe(true));
+    expect(screen.getByText('关联 (1)')).toBeInTheDocument();
+    expect(screen.getAllByText('topics/topic-rag.md').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText(/更新时间：/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'topics/topic-rag.md' }));
+    expect(await screen.findByText('可阅读的 Wiki 文件。')).toBeInTheDocument();
+    expect(screen.getByText('来源 (1)')).toBeInTheDocument();
+    expect(screen.getByText('相关实体')).toBeInTheDocument();
+    expect(screen.getByText('PostgreSQL')).toBeInTheDocument();
+    expect(screen.getByText('相关概念')).toBeInTheDocument();
+    expect(screen.getByText('HNSW')).toBeInTheDocument();
+    await userEvent.click(screen.getByText('关闭', { selector: 'button' }));
+
+    await userEvent.click(screen.getByText('生成页面'));
+    await userEvent.click(screen.getByText('RAG'));
+    expect(await screen.findByText('可阅读的 Wiki 文件。')).toBeInTheDocument();
+    expect(screen.getByText('来源 (1)')).toBeInTheDocument();
+    expect(screen.getAllByText('raw/knowledge.md').length).toBeGreaterThanOrEqual(1);
+    await userEvent.click(screen.getByRole('button', { name: 'raw/knowledge.md' }));
+    expect(await screen.findByText('Knowledge Raw 正文')).toBeInTheDocument();
+    expect(screen.getByText('关联 (1)')).toBeInTheDocument();
+    expect(screen.queryByText('v3')).not.toBeInTheDocument();
+    expect(screen.queryByText('wiki-rag', { exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByText('topic', { exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByText('und', { exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByText('3', { exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByText('title', { exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByText('source_file', { exact: true })).not.toBeInTheDocument();
+    expect(screen.getByText(/更新时间：/)).toBeInTheDocument();
+    await userEvent.click(screen.getByText('关闭', { selector: 'button' }));
+    expect(await screen.findByText('RAG')).toBeInTheDocument();
+    await userEvent.click(await screen.findByText('topics'));
+    expect((await screen.findAllByRole('button', { name: 'Collapse' })).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('原始来源支持创建单文件编译任务', async () => {
+    let compileBody: Record<string, unknown> | null = null;
+    server.use(
+      http.get('/api/v1/knowledge/llm-wiki/tree', ({ request }) => {
+        const layer = new URL(request.url).searchParams.get('layer');
+        const items = layer === 'raw'
+          ? [{ id: 'raw-guide', parent_id: '', layer: 'raw', kind: 'file', name: 'guide.md', relative_path: 'guide.md', source_id: '7', has_children: false, child_count: 0, document_count: 1 }]
+          : [];
+        return HttpResponse.json({ code: 'ok', message: 'ok', data: { items, total: items.length, document_count: items.length } });
+      }),
+      http.post('/api/v1/knowledge/llm-wiki/compile', async ({ request }) => {
+        compileBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({
+          code: 'ok',
+          message: 'ok',
+          data: { id: '88', status: 'pending', stage: 'queued', source_ids: ['7'], created_at: '2026-09-08T10:00:00Z', updated_at: '2026-09-08T10:00:00Z' },
+        }, { status: 202 });
+      }),
+    );
+
+    render(<KnowledgePage />);
+    await userEvent.click(await screen.findByRole('button', { name: /^LLM Wiki/ }));
+    await userEvent.click(await screen.findByText('原始来源'));
+    await userEvent.click(await screen.findByRole('button', { name: '编译 guide.md' }));
+
+    await waitFor(() => expect(compileBody).toEqual({ source_ids: ['7'], force: false }));
+  });
+
+  it('展示失败的编译任务并支持重试', async () => {
+    let retried = false;
+    server.use(
+      http.get('/api/v1/knowledge/llm-wiki/jobs', () =>
+        HttpResponse.json({
+          code: 'ok',
+          message: 'ok',
+          data: {
+            items: [{
+              id: '42', status: retried ? 'pending' : 'failed', stage: retried ? 'queued' : 'compile',
+              source_ids: ['7'], error: retried ? '' : '模型调用失败',
+              created_at: '2026-09-08T10:00:00Z', updated_at: '2026-09-08T10:01:00Z',
+            }],
+            total: 1,
+          },
+        }),
+      ),
+      http.post('/api/v1/knowledge/llm-wiki/jobs/42/retry', () => {
+        retried = true;
+        return HttpResponse.json({
+          code: 'ok',
+          message: 'ok',
+          data: { id: '42', status: 'pending', stage: 'queued', source_ids: ['7'], created_at: '2026-09-08T10:00:00Z', updated_at: '2026-09-08T10:02:00Z' },
+        });
+      }),
+      http.get('/api/v1/knowledge/llm-wiki/sources', () =>
+        HttpResponse.json({ code: 'ok', message: 'ok', data: { items: [{ id: '7', raw_path: 'docs/guide.md' }], total: 1 } }),
+      ),
+    );
+
+    render(<KnowledgePage />);
+    await userEvent.click(await screen.findByRole('button', { name: /^LLM Wiki/ }));
+
+    expect(await screen.findByText('编译任务')).toBeInTheDocument();
+    expect(await screen.findByText('模型调用失败')).toBeInTheDocument();
+    expect(screen.getByText('docs/guide.md')).toBeInTheDocument();
+    const retryButton = screen.getByRole('button', { name: '重试编译' });
+    expect(retryButton.querySelector('.lucide-rotate-ccw')).toBeInTheDocument();
+    expect(retryButton.querySelector('.lucide-refresh-cw')).not.toBeInTheDocument();
+    await userEvent.click(retryButton);
+
+    await waitFor(() => expect(retried).toBe(true));
+    expect(await screen.findByText('排队中')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '重试编译' })).not.toBeInTheDocument();
+  });
+
+  it('只展示进行中和失败任务，进行中任务支持取消', async () => {
+    let cancelled = false;
+    server.use(
+      http.get('/api/v1/knowledge/llm-wiki/jobs', () =>
+        HttpResponse.json({
+          code: 'ok',
+          message: 'ok',
+          data: {
+            items: cancelled ? [] : [
+              { id: '11', status: 'running', stage: 'summarize', source_ids: ['1'], created_at: '2026-09-08T10:00:00Z', updated_at: '2026-09-08T10:01:00Z' },
+              { id: '12', status: 'succeeded', stage: 'done', source_ids: ['2'], created_at: '2026-09-08T09:00:00Z', updated_at: '2026-09-08T09:01:00Z' },
+              { id: '13', status: 'failed', stage: 'compile', source_ids: ['3'], error: '编译失败', created_at: '2026-09-08T08:00:00Z', updated_at: '2026-09-08T08:01:00Z' },
+            ],
+            total: cancelled ? 0 : 3,
+          },
+        }),
+      ),
+      http.post('/api/v1/knowledge/llm-wiki/jobs/11/cancel', () => {
+        cancelled = true;
+        return HttpResponse.json({
+          code: 'ok',
+          message: 'ok',
+          data: { id: '11', status: 'cancelled', stage: 'cancelled', source_ids: ['1'], created_at: '2026-09-08T10:00:00Z', updated_at: '2026-09-08T10:02:00Z' },
+        });
+      }),
+    );
+
+    render(<KnowledgePage />);
+    await userEvent.click(await screen.findByRole('button', { name: /^LLM Wiki/ }));
+
+    expect(await screen.findByText('编译中')).toBeInTheDocument();
+    expect(screen.getByText('编译失败')).toBeInTheDocument();
+    expect(screen.queryByText('成功')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '取消编译' }));
+
+    await waitFor(() => expect(cancelled).toBe(true));
+    expect(screen.queryByText('编译中')).not.toBeInTheDocument();
   });
 });

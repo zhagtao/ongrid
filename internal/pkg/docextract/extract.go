@@ -45,6 +45,87 @@ func Extract(filename string, data []byte) (string, error) {
 	}
 }
 
+// ExtractPlainText returns a non-Markdown preview for office documents. It is
+// intentionally separate from Extract: the compiler needs Markdown-shaped
+// structure, while a Raw DOCX preview must not pretend to be a Markdown file.
+func ExtractPlainText(filename string, data []byte) (string, error) {
+	switch strings.ToLower(filepath.Ext(filename)) {
+	case ".docx":
+		return docxPlainText(data)
+	case ".pdf":
+		return extractPDF(data)
+	case ".md", ".markdown", ".txt", ".text":
+		if !utf8.Valid(data) {
+			return "", fmt.Errorf("file is not valid UTF-8 text")
+		}
+		return string(data), nil
+	default:
+		return "", fmt.Errorf("unsupported file type %q", filepath.Ext(filename))
+	}
+}
+
+func docxPlainText(data []byte) (string, error) {
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return "", fmt.Errorf("read docx (not a valid .docx zip): %w", err)
+	}
+	var document *zip.File
+	for _, file := range zr.File {
+		if file.Name == "word/document.xml" {
+			document = file
+			break
+		}
+	}
+	if document == nil {
+		return "", fmt.Errorf("docx missing word/document.xml")
+	}
+	rc, err := document.Open()
+	if err != nil {
+		return "", fmt.Errorf("open docx body: %w", err)
+	}
+	defer func() { _ = rc.Close() /* read-only cleanup */ }()
+
+	var out strings.Builder
+	decoder := xml.NewDecoder(rc)
+	inText := false
+	for {
+		token, tokenErr := decoder.Token()
+		if tokenErr == io.EOF {
+			break
+		}
+		if tokenErr != nil {
+			return "", fmt.Errorf("parse docx xml: %w", tokenErr)
+		}
+		switch value := token.(type) {
+		case xml.StartElement:
+			switch value.Name.Local {
+			case "t", "delText":
+				inText = true
+			case "tab":
+				out.WriteByte('\t')
+			case "br", "cr":
+				out.WriteByte('\n')
+			}
+		case xml.CharData:
+			if inText {
+				out.Write([]byte(value))
+			}
+		case xml.EndElement:
+			switch value.Name.Local {
+			case "t", "delText":
+				inText = false
+			case "p":
+				out.WriteByte('\n')
+			}
+		}
+	}
+	text := strings.TrimSpace(out.String())
+	if text == "" {
+		return "", fmt.Errorf("no extractable text in docx")
+	}
+	return text, nil
+}
+
 // extractPDF pulls the embedded text layer. Returns a friendly error when
 // the PDF carries no extractable text (scanned/image-only) so the operator
 // knows OCR isn't supported rather than seeing a blank doc.

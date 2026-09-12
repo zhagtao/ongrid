@@ -57,6 +57,14 @@ func Open(cfg config.DBConfig, log *slog.Logger) (*gorm.DB, error) {
 	}
 }
 
+// OpenSQLite opens a dedicated SQLite database with the same safety and
+// observability defaults as the application database. Bounded contexts that
+// own a filesystem-scoped database use this entry point instead of borrowing
+// the global MySQL connection.
+func OpenSQLite(path string, log *slog.Logger) (*gorm.DB, error) {
+	return openSQLite(path, log)
+}
+
 // openMySQL opens a MySQL connection via gorm and verifies reachability
 // with Ping(). The DSN password is never logged.
 func openMySQL(dsn string, log *slog.Logger) (*gorm.DB, error) {

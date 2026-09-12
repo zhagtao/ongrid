@@ -40,13 +40,13 @@ const (
 // Repository is a git repo we mirror locally + index. Tracked via
 // last_synced_at; a refresh job re-clones / pulls then re-walks files.
 type Repository struct {
-	ID            uint64    `gorm:"primaryKey;autoIncrement"`
-	URL           string    `gorm:"size:512;not null;uniqueIndex:idx_repo_url"`
-	Branch        string    `gorm:"size:128;not null;default:main"`
-	Description   string    `gorm:"size:512"`
+	ID            uint64     `gorm:"primaryKey;autoIncrement"`
+	URL           string     `gorm:"size:512;not null;uniqueIndex:idx_repo_url"`
+	Branch        string     `gorm:"size:128;not null;default:main"`
+	Description   string     `gorm:"size:512"`
 	LastSyncedAt  *time.Time `gorm:"column:last_synced_at"`
-	LastSyncError string    `gorm:"type:text;column:last_sync_error"`
-	FileCount     int       `gorm:"column:file_count"`
+	LastSyncError string     `gorm:"type:text;column:last_sync_error"`
+	FileCount     int        `gorm:"column:file_count"`
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }
@@ -68,20 +68,20 @@ func (Repository) TableName() string { return "knowledge_repos" }
 // per identity the simplest model. private_key + passphrase are
 // AES-encrypted at the data layer before insertion; never logged.
 type SSHIdentity struct {
-	ID           uint64    `gorm:"primaryKey;autoIncrement"`
-	Name         string    `gorm:"size:128;not null;uniqueIndex:uk_ssh_name"`
-	PrivateKey   string    `gorm:"type:text;not null;column:private_key"`
-	PublicKey    string    `gorm:"type:text;not null;column:public_key"`
-	Fingerprint  string    `gorm:"size:128;not null"` // SHA256:xxx derived from PublicKey
-	Passphrase   string    `gorm:"type:text;column:passphrase"` // nullable; MVP rejects non-empty
-	HostsJSON    string    `gorm:"type:text;not null;column:hosts"`        // JSON array of host glob patterns
+	ID          uint64 `gorm:"primaryKey;autoIncrement"`
+	Name        string `gorm:"size:128;not null;uniqueIndex:uk_ssh_name"`
+	PrivateKey  string `gorm:"type:text;not null;column:private_key"`
+	PublicKey   string `gorm:"type:text;not null;column:public_key"`
+	Fingerprint string `gorm:"size:128;not null"`               // SHA256:xxx derived from PublicKey
+	Passphrase  string `gorm:"type:text;column:passphrase"`     // nullable; MVP rejects non-empty
+	HostsJSON   string `gorm:"type:text;not null;column:hosts"` // JSON array of host glob patterns
 	// MySQL TEXT columns cannot carry a DEFAULT clause (Error 1101) —
 	// so this is NOT NULL but no DB-level default; biz layer always
 	// supplies at least the empty string on insert.
-	KnownHosts   string    `gorm:"type:text;not null;column:known_hosts"`
-	LastUsedAt   *time.Time `gorm:"column:last_used_at"`
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	KnownHosts string     `gorm:"type:text;not null;column:known_hosts"`
+	LastUsedAt *time.Time `gorm:"column:last_used_at"`
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // TableName pins the table name.
@@ -114,18 +114,18 @@ type Doc struct {
 	// the original was — Chinese blog, English RFC, etc.). It's also
 	// the natural-key input to manualDocID, so changing it changes
 	// the doc id.
-	Title      string
+	Title string
 	// TitleEN is an optional English overlay shown when the operator's
 	// locale is en-US. Empty = no override; the UI falls back to
 	// Title (original). Lets a Chinese-language vault stay readable
 	// for non-Chinese operators without lossy auto-translation. Stored
 	// alongside Title in the qdrant payload as `title_en`.
-	TitleEN    string
-	Content    string
-	Path       string   // "/"-separated breadcrumb; empty = root
-	Tags       []string // free-form labels; nil = none
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	TitleEN   string
+	Content   string
+	Path      string   // "/"-separated breadcrumb; empty = root
+	Tags      []string // free-form labels; nil = none
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // ListDocsFilter narrows /knowledge/docs and the biz Search. SourceType
@@ -148,6 +148,7 @@ type ListDocsFilter struct {
 // goes way up when the caller already knows the domain (e.g. LLM
 // with `path_prefix=网络/`).
 type SearchOptions struct {
+	Mode       string
 	Path       string
 	PathPrefix string
 	Tags       []string // any-match (filter passes if doc has any one)
@@ -156,6 +157,11 @@ type SearchOptions struct {
 
 // SearchHit is the shared search result shape (Doc + cosine score).
 type SearchHit struct {
-	Doc   *Doc
-	Score float64
+	Doc             *Doc
+	Score           float64
+	Layer           string
+	PageType        string
+	PageID          string
+	SourceVersionID string
+	MatchedNode     string
 }

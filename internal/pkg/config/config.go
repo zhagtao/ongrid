@@ -61,6 +61,7 @@ type Config struct {
 	Profiles       ProfilesConfig
 	PacketCapture  PacketCaptureConfig
 	Skills         SkillsConfig
+	LLMWiki        LLMWikiConfig
 }
 
 // SkillsConfig wires the manager-side subprocess skill loader. The
@@ -450,6 +451,19 @@ type EdgeConfig struct {
 	SecretsFile string
 }
 
+type LLMWikiConfig struct {
+	Enabled               bool
+	Dir                   string
+	TimeoutSeconds        int
+	LeafBatchInputTokens  int
+	LeafBatchOutputTokens int
+	LeafBatchSafetyTokens int
+	EnableLeafBatch       bool
+	EnableChunkCache      bool
+	EnableSourceSynthesis bool
+	LeafModelVersion      string
+}
+
 // Load reads env vars and returns a Config with defaults applied.
 // It never returns a non-nil error in MVP; the signature leaves room
 // for future validation (e.g. required fields).
@@ -596,6 +610,17 @@ func Load() (*Config, error) {
 	c.Alert.PromIngestFailLimit = getEnvInt("ONGRID_ALERT_PROM_INGEST_FAIL_LIMIT", 5)
 
 	c.Skills.ExternalDirs = getEnvCSV("ONGRID_SKILLS_EXTERNAL_DIRS", nil)
+
+	c.LLMWiki.Enabled = getEnvBool("ONGRID_LLM_WIKI_ENABLED", false)
+	c.LLMWiki.Dir = getEnv("ONGRID_LLM_WIKI_DIR", "/var/lib/ongrid/llm-wiki")
+	c.LLMWiki.TimeoutSeconds = getEnvInt("ONGRID_LLM_WIKI_TIMEOUT_SECONDS", 600)
+	c.LLMWiki.LeafBatchInputTokens = getEnvInt("ONGRID_LLM_WIKI_LEAF_BATCH_INPUT_TOKENS", 32000)
+	c.LLMWiki.LeafBatchOutputTokens = getEnvInt("ONGRID_LLM_WIKI_LEAF_BATCH_OUTPUT_TOKENS", 8000)
+	c.LLMWiki.LeafBatchSafetyTokens = getEnvInt("ONGRID_LLM_WIKI_LEAF_BATCH_SAFETY_TOKENS", 4000)
+	c.LLMWiki.EnableLeafBatch = getEnvBool("ONGRID_LLM_WIKI_ENABLE_LEAF_BATCH", true)
+	c.LLMWiki.EnableChunkCache = getEnvBool("ONGRID_LLM_WIKI_ENABLE_CHUNK_CACHE", true)
+	c.LLMWiki.EnableSourceSynthesis = getEnvBool("ONGRID_LLM_WIKI_ENABLE_SOURCE_SYNTHESIS", true)
+	c.LLMWiki.LeafModelVersion = getEnv("ONGRID_LLM_WIKI_LEAF_MODEL_VERSION", "")
 
 	return c, nil
 }

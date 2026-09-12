@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package ongrid.manager.knowledge.v1;
+
+option go_package = "github.com/ongridio/ongrid/api/gen/manager/knowledge/v1;knowledgev1";
+
+// KnowledgeWikiService 描述 LLM Wiki 的公开 HTTP 契约。
+service KnowledgeWikiService {
+  rpc ListTree(ListTreeRequest) returns (ListTreeResponse);
+  rpc GetNode(GetNodeRequest) returns (WikiNode);
+  rpc PreviewNode(PreviewNodeRequest) returns (NodePreview);
+  rpc DeleteNode(DeleteNodeRequest) returns (DeleteNodeResponse);
+  rpc GetSchema(GetSchemaRequest) returns (WikiNode);
+  rpc ListSources(ListSourcesRequest) returns (ListSourcesResponse);
+  rpc Search(SearchRequest) returns (SearchResponse);
+  rpc ListJobs(ListJobsRequest) returns (ListJobsResponse);
+  rpc Upload(UploadRequest) returns (WikiSource);
+  rpc Compile(CompileRequest) returns (CompileJob);
+  rpc RetryJob(RetryJobRequest) returns (CompileJob);
+  rpc CancelJob(CancelJobRequest) returns (CompileJob);
+}
+
+message ListTreeRequest { string layer = 1; string parent_id = 2; }
+message GetNodeRequest { string id = 1; }
+message PreviewNodeRequest { string id = 1; }
+message DeleteNodeRequest { string id = 1; }
+message GetSchemaRequest {}
+message ListSourcesRequest { string status = 1; uint32 limit = 2; }
+message SearchRequest { string query = 1; string mode = 2; uint32 limit = 3; }
+message ListJobsRequest { uint32 limit = 1; }
+message UploadRequest { string filename = 1; bytes content = 2; }
+message CompileRequest { repeated string source_ids = 1; bool force = 2; }
+message RetryJobRequest { string id = 1; }
+message CancelJobRequest { string id = 1; }
+
+message WikiNode {
+  string id = 1; string parent_id = 2; string layer = 3; string kind = 4;
+  string name = 5; string relative_path = 6; bool has_children = 7;
+  uint32 child_count = 8; string source_id = 9; string page_id = 10;
+  string status = 11; string updated_at = 12; string content = 13;
+}
+message NodePreview { string name = 1; string content_type = 2; bytes content = 3; }
+message DeleteNodeResponse { bool deleted = 1; }
+message ListTreeResponse { repeated WikiNode items = 1; uint64 total = 2; }
+message WikiSource { string id = 1; string source_key = 2; string source_type = 3; string raw_path = 4; string status = 5; string current_version_id = 6; string updated_at = 7; }
+message ListSourcesResponse { repeated WikiSource items = 1; uint64 total = 2; }
+message SearchHit { string layer = 1; string page_type = 2; string page_id = 3; string source_version_id = 4; string title = 5; string preview = 6; double score = 7; }
+message SearchResponse { repeated SearchHit items = 1; uint64 total = 2; }
+message CompileJob { string id = 1; string status = 2; string stage = 3; repeated string source_ids = 4; string error = 5; string created_at = 6; string updated_at = 7; }
+message ListJobsResponse { repeated CompileJob items = 1; uint64 total = 2; }

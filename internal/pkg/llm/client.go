@@ -115,7 +115,11 @@ type ChatReq struct {
 	Messages    []Message
 	Tools       []ToolSchema
 	Temperature float32
-	UserID      uint64 // optional; used for budget scoping + logging only
+	// MaxOutputTokens bounds visible output plus reasoning tokens when the
+	// provider supports the OpenAI-compatible completion limit. Zero leaves
+	// the provider default unchanged.
+	MaxOutputTokens int
+	UserID          uint64 // optional; used for budget scoping + logging only
 }
 
 // ChatResp is the output of Client.Chat.
@@ -577,12 +581,16 @@ func (c *openaiClient) toOpenAIReq(req ChatReq, model string) (openai.ChatComple
 		}
 	}
 
-	return openai.ChatCompletionRequest{
+	request := openai.ChatCompletionRequest{
 		Model:       model,
 		Messages:    msgs,
 		Tools:       tools,
 		Temperature: temp,
-	}, nil
+	}
+	if req.MaxOutputTokens > 0 {
+		request.MaxCompletionTokens = req.MaxOutputTokens
+	}
+	return request, nil
 }
 
 func toOpenAIMessage(m Message) (openai.ChatCompletionMessage, error) {
