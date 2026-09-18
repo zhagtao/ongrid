@@ -1,0 +1,11 @@
+SET FOREIGN_KEY_CHECKS = 0;
+DROP TABLE IF EXISTS knowledge_wiki_page_relations;
+DROP TABLE IF EXISTS knowledge_wiki_page_sources;
+DROP TABLE IF EXISTS knowledge_wiki_pages;
+DROP TABLE IF EXISTS knowledge_wiki_topic_evidence;
+DROP TABLE IF EXISTS knowledge_wiki_topics;
+DROP TABLE IF EXISTS knowledge_wiki_compile_jobs;
+DROP TABLE IF EXISTS knowledge_wiki_source_chunks;
+DROP TABLE IF EXISTS knowledge_wiki_source_versions;
+DROP TABLE IF EXISTS knowledge_wiki_sources;
+SET FOREIGN_KEY_CHECKS = 1;

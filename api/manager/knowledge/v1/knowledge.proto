@@ -1,4 +1,5 @@
 syntax = "proto3";
+
 package ongrid.manager.knowledge.v1;
 option go_package = "github.com/ongridio/ongrid/api/gen/manager/knowledge/v1;knowledgev1";
 
